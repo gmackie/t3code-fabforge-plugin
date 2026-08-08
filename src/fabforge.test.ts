@@ -1,0 +1,30 @@
+import { describe, expect, test } from "bun:test";
+import { createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
+
+describe("FabForge adapter", () => {
+  test("normalizes projects and kit runs", () => {
+    expect(normalizeFabForgeSnapshot({ projects: [{ id: "p1", name: "Fixture" }], runs: [{ id: "k1", status: "queued" }] })).toEqual({
+      projects: [{ id: "p1", name: "Fixture" }],
+      kitRuns: [{ id: "k1", status: "queued" }],
+    });
+  });
+
+  test("keeps workspace scoping on every read", async () => {
+    const urls: string[] = [];
+    const client = createFabForgeClient({ endpoint: "https://fabforge.example", token: "secret", workspaceId: "w1", fetchImpl: async (input) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    } });
+    await client.snapshot();
+    expect(urls).toEqual([
+      "https://fabforge.example/api/fabrication/v0/projects?workspaceId=w1",
+      "https://fabforge.example/api/fabrication/v0/kit-runs?workspaceId=w1",
+    ]);
+  });
+
+  test("caches the latest fabrication refresh", async () => {
+    const coordinator = createPollingCoordinator({ refresh: async () => ({ projects: [], kitRuns: [] }) });
+    await coordinator.refresh();
+    expect(coordinator.snapshot).toEqual({ projects: [], kitRuns: [] });
+  });
+});
