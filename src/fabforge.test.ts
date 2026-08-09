@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
+import { buildCockpitViewModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
 
 describe("FabForge adapter", () => {
   test("normalizes projects and kit runs", () => {
@@ -26,5 +26,12 @@ describe("FabForge adapter", () => {
     const coordinator = createPollingCoordinator({ refresh: async () => ({ projects: [], kitRuns: [] }) });
     await coordinator.refresh();
     expect(coordinator.snapshot).toEqual({ projects: [], kitRuns: [] });
+  });
+
+  test("builds fabrication cockpit navigation and blockers metric", () => {
+    expect(buildCockpitViewModel({ projects: [{ id: "p1", name: "Fixture" }], kitRuns: [{ id: "k1", status: "blocked" }, { id: "k2", status: "complete" }] })).toEqual({
+      navigation: ["projects", "components", "work-orders", "kit-runs", "evidence"],
+      metrics: { projects: 1, activeKitRuns: 1, blockedKitRuns: 1 },
+    });
   });
 });
