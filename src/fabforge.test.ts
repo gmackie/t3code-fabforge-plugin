@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCockpitViewModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
+import { buildCockpitViewModel, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
 
 describe("FabForge adapter", () => {
   test("normalizes projects and kit runs", () => {
@@ -33,5 +33,14 @@ describe("FabForge adapter", () => {
       navigation: ["projects", "components", "work-orders", "kit-runs", "evidence"],
       metrics: { projects: 1, activeKitRuns: 1, blockedKitRuns: 1 },
     });
+  });
+
+  test("builds native T3 fabrication cards from normalized runs", () => {
+    const surface = buildSurfaceModel({ projects: [{ id: "p1", name: "Fixture" }], kitRuns: [{ id: "k1", status: "blocked" }] });
+    expect(surface.pluginId).toBe("com.t3code.fabforge");
+    expect(surface.cards).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "blocked-kit-runs", value: "1" }),
+      expect.objectContaining({ id: "kit-runs" }),
+    ]));
   });
 });
