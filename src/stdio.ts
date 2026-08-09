@@ -1,8 +1,12 @@
+import { createFabForgeClient, type FabForgeSnapshot } from "./fabforge.ts";
 import { createRpcHandler } from "./rpc.ts";
-import type { FabForgeSnapshot } from "./fabforge.ts";
 
-const snapshot = JSON.parse(process.env.T3_PLUGIN_SNAPSHOT ?? '{"projects":[],"kitRuns":[]}') as FabForgeSnapshot;
-const handler = createRpcHandler({ snapshot, refresh: async () => snapshot });
+let snapshot = JSON.parse(process.env.T3_PLUGIN_SNAPSHOT ?? '{"projects":[],"kitRuns":[]}') as FabForgeSnapshot;
+const client = process.env.T3_PLUGIN_ENDPOINT && process.env.T3_PLUGIN_TOKEN && process.env.T3_PLUGIN_WORKSPACE
+  ? createFabForgeClient({ endpoint: process.env.T3_PLUGIN_ENDPOINT, token: process.env.T3_PLUGIN_TOKEN, workspaceId: process.env.T3_PLUGIN_WORKSPACE })
+  : null;
+const refresh = async () => { if (client) snapshot = await client.snapshot(); return snapshot; };
+const handler = createRpcHandler({ get snapshot() { return snapshot; }, refresh });
 let buffer = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
