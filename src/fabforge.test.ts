@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCockpitViewModel, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
+import { buildCockpitViewModel, buildManufacturingWorkflow, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
 
 describe("FabForge adapter", () => {
   test("normalizes projects and kit runs", () => {
@@ -19,6 +19,9 @@ describe("FabForge adapter", () => {
     expect(urls).toEqual([
       "https://fabforge.example/api/fabrication/v0/projects?workspaceId=w1",
       "https://fabforge.example/api/fabrication/v0/kit-runs?workspaceId=w1",
+      "https://fabforge.example/api/fabrication/v0/jobs?workspaceId=w1",
+      "https://fabforge.example/api/fabrication/v0/machines?workspaceId=w1",
+      "https://fabforge.example/api/fabrication/v0/materials?workspaceId=w1",
     ]);
   });
 
@@ -42,5 +45,25 @@ describe("FabForge adapter", () => {
       expect.objectContaining({ id: "blocked-kit-runs", value: "1" }),
       expect.objectContaining({ id: "kit-runs" }),
     ]));
+  });
+
+  test("normalizes manufacturing processes, machines, and materials", () => {
+    const snapshot = normalizeFabForgeSnapshot({
+      projects: [{ id: "p1", name: "Fixture" }],
+      runs: [{ id: "k1", status: "queued" }],
+      jobs: [{ id: "job-1", process: "laser", status: "ready", machineId: "laser-1", material: "acrylic" }],
+      machines: [{ id: "laser-1", name: "Laser 1", process: "laser", status: "online" }],
+      materials: [{ id: "mat-1", name: "Acrylic", process: "laser", stock: "available" }],
+    });
+    expect(snapshot.jobs).toEqual([{ id: "job-1", process: "laser", status: "ready", machineId: "laser-1", material: "acrylic" }]);
+    expect(snapshot.machines).toEqual([{ id: "laser-1", name: "Laser 1", process: "laser", status: "online" }]);
+    expect(snapshot.materials).toEqual([{ id: "mat-1", name: "Acrylic", process: "laser", stock: "available" }]);
+  });
+
+  test("builds a manufacturing job review workflow", () => {
+    const workflow = buildManufacturingWorkflow({ projects: [], kitRuns: [], jobs: [{ id: "job-1", process: "fdm", status: "ready" }], machines: [], materials: [] });
+    expect(workflow.currentStage).toBe("review");
+    expect(workflow.evidence?.[0]?.kind).toBe("check");
+    expect(workflow.actions?.[0]?.id).toBe("approve");
   });
 });
