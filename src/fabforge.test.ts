@@ -22,6 +22,7 @@ describe("FabForge adapter", () => {
       "https://fabforge.example/api/fabrication/v0/jobs?workspaceId=w1",
       "https://fabforge.example/api/fabrication/v0/machines?workspaceId=w1",
       "https://fabforge.example/api/fabrication/v0/materials?workspaceId=w1",
+      "https://fabforge.example/api/fabrication/v0/artifacts?workspaceId=w1",
     ]);
   });
 
@@ -58,6 +59,20 @@ describe("FabForge adapter", () => {
     expect(snapshot.jobs).toEqual([{ id: "job-1", process: "laser", status: "ready", machineId: "laser-1", material: "acrylic" }]);
     expect(snapshot.machines).toEqual([{ id: "laser-1", name: "Laser 1", process: "laser", status: "online" }]);
     expect(snapshot.materials).toEqual([{ id: "mat-1", name: "Acrylic", process: "laser", stock: "available" }]);
+  });
+
+  test("normalizes fabrication artifacts with stable kinds and verification state", () => {
+    const snapshot = normalizeFabForgeSnapshot({
+      projects: [], runs: [],
+      artifacts: [
+        { id: "artifact-1", jobId: "job-1", path: "out/part.gcode", status: "passed" },
+        { id: "artifact-2", jobId: "job-2", path: "out/panel.dxf", kind: "dxf", status: "pending", detail: "Awaiting cut inspection" },
+      ],
+    });
+    expect(snapshot.artifacts).toEqual([
+      { id: "artifact-1", jobId: "job-1", path: "out/part.gcode", kind: "gcode", status: "passed" },
+      { id: "artifact-2", jobId: "job-2", path: "out/panel.dxf", kind: "dxf", status: "pending", detail: "Awaiting cut inspection" },
+    ]);
   });
 
   test("builds a manufacturing job review workflow", () => {

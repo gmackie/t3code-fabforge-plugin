@@ -31,7 +31,7 @@ const handler = createRpcHandler({
   refresh,
   getWorkflowState: () => workflowState,
   saveWorkflowState: async (next: FabForgeWorkflowState) => {
-    workflowState = { approved: next.approved === true, executionRequested: next.executionRequested === true, ...(next.verificationStatus ? { verificationStatus: next.verificationStatus } : {}) };
+    workflowState = { approved: next.approved === true, ...(next.jobId ? { jobId: next.jobId } : {}), executionRequested: next.executionRequested === true, ...(next.verificationStatus ? { verificationStatus: next.verificationStatus } : {}) };
     if (statePath) await Bun.write(statePath, JSON.stringify({ workflowState }));
   },
   executeJob: async (input) => {

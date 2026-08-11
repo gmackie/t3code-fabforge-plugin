@@ -20,8 +20,8 @@ describe("FabForge RPC", () => {
   });
 
   test("serves job verification as a native T3 panel", async () => {
-    const handler = createRpcHandler({ snapshot: { projects: [], kitRuns: [], jobs: [{ id: "job-1", process: "fdm", status: "ready" }], machines: [], materials: [] }, refresh: async () => ({ projects: [], kitRuns: [], jobs: [], machines: [], materials: [] }) });
-    await expect(handler("panel.get", { panelId: "fabforge.job-verification" })).resolves.toMatchObject({ ok: true, result: { content: { kind: "verification", status: "running" } } });
+    const handler = createRpcHandler({ snapshot: { projects: [], kitRuns: [], jobs: [{ id: "job-1", process: "fdm", status: "ready" }], machines: [], materials: [], artifacts: [{ id: "artifact-1", jobId: "job-1", path: "out/part.gcode", kind: "gcode", status: "pending" }] }, refresh: async () => ({ projects: [], kitRuns: [] }) });
+    await expect(handler("panel.get", { panelId: "fabforge.job-verification" })).resolves.toMatchObject({ ok: true, result: { content: { kind: "verification", status: "running", artifacts: [{ id: "artifact-1", status: "pending" }] } } });
   });
 
   test("requires approval before requesting machine execution", async () => {
@@ -36,6 +36,14 @@ describe("FabForge RPC", () => {
     await expect(handler("action.execute", { actionId: "approve", workflowId: "fabforge.job-review" })).resolves.toMatchObject({ ok: true, result: { status: "approved" } });
     await expect(handler("action.execute", { actionId: "execute", workflowId: "fabforge.job-review", input: { jobId: "job-1", machineId: "printer-1" } })).resolves.toMatchObject({ ok: true, result: { status: "accepted" } });
     expect(calls).toEqual([{ approved: true }, { jobId: "job-1", process: "fdm", machineId: "printer-1" }, { approved: true, executionRequested: true }]);
+  });
+
+  test("persists the selected job when approving a manufacturing plan", async () => {
+    let state: FabForgeWorkflowState = {};
+    const handler = createRpcHandler({ snapshot: { projects: [], kitRuns: [], jobs: [{ id: "job-1", process: "fdm", status: "ready" }, { id: "job-2", process: "laser", status: "ready" }], machines: [], materials: [] }, refresh: async () => ({ projects: [], kitRuns: [] }), getWorkflowState: () => state, saveWorkflowState: async (next) => { state = next; } });
+    await expect(handler("action.execute", { actionId: "approve", workflowId: "fabforge.job-review", input: { jobId: "job-2" } })).resolves.toMatchObject({ ok: true });
+    expect(state).toEqual({ approved: true, jobId: "job-2" });
+    await expect(handler("workflow.get", { workflowId: "fabforge.job-review" })).resolves.toMatchObject({ ok: true, result: { evidence: expect.arrayContaining([expect.objectContaining({ title: "laser process control" })]) } });
   });
 
   test("verifies an artifact and advances the workflow state", async () => {

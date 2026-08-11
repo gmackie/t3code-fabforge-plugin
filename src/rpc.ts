@@ -47,9 +47,10 @@ export function createRpcHandler(coordinator: {
           refreshedAt: new Date().toISOString(),
           content: {
             kind: "verification" as const,
-            status: blocked ? "failed" as const : jobs.length > 0 ? "running" as const : "idle" as const,
+            status: blocked || (snapshot.artifacts ?? []).some((artifact) => artifact.status === "failed") ? "failed" as const : jobs.length > 0 || (snapshot.artifacts ?? []).some((artifact) => artifact.status === "pending") ? "running" as const : "idle" as const,
             summary: `${jobs.length} manufacturing jobs · ${snapshot.machines?.length ?? 0} machines · ${snapshot.materials?.length ?? 0} materials`,
-            runs: jobs.slice(0, 8).map((job) => ({ id: job.id, title: `${job.process} job`, status: job.status, ...(job.machineId ? { detail: `machine ${job.machineId}` } : {}) })),
+            runs: jobs.slice(0, 8).map((job) => ({ id: job.id, title: `${job.process} job`, status: job.status, control: buildProcessControl(job), ...(job.machineId ? { detail: `machine ${job.machineId}` } : {}) })),
+            artifacts: (snapshot.artifacts ?? []).slice(0, 12).map((artifact) => ({ id: artifact.id, jobId: artifact.jobId, path: artifact.path, kind: artifact.kind, status: artifact.status, ...(artifact.detail ? { detail: artifact.detail } : {}) })),
             actions: [{ id: "fabforge.refresh-verification", title: "Refresh verification" }],
           },
         },
@@ -59,11 +60,12 @@ export function createRpcHandler(coordinator: {
     if (method === "action.execute" && payload?.workflowId === "fabforge.job-review") {
       const state = getState();
       if (payload.actionId === "approve") {
-        await saveState({ ...state, approved: true });
+        const selectedJobId = ((payload.input ?? {}) as { jobId?: string }).jobId;
+        await saveState({ ...state, approved: true, ...(selectedJobId ? { jobId: selectedJobId } : {}) });
         return { ok: true as const, result: { status: "approved" as const } };
       }
       const input = (payload.input ?? {}) as { jobId?: string; machineId?: string; artifactPath?: string };
-      const job = (snapshot.jobs ?? []).find((candidate) => candidate.id === input.jobId) ?? snapshot.jobs?.[0];
+      const job = (snapshot.jobs ?? []).find((candidate) => candidate.id === input.jobId) ?? (state.jobId ? (snapshot.jobs ?? []).find((candidate) => candidate.id === state.jobId) : undefined) ?? snapshot.jobs?.[0];
       if (!job) return { ok: false as const, error: "FabForge has no manufacturing job to operate on" };
       if (payload.actionId === "execute") {
         if (!state.approved) return { ok: false as const, error: "Approve the manufacturing job before execution" };
