@@ -1,12 +1,19 @@
-import { buildManufacturingWorkflow, buildSurfaceModel, type FabForgeSnapshot } from "./fabforge.ts";
+import { buildManufacturingWorkflow, buildProcessControl, buildSurfaceModel, type FabForgeSnapshot, type FabForgeWorkflowState } from "./fabforge.ts";
 
 export function createRpcHandler(coordinator: {
   snapshot: FabForgeSnapshot | null;
   refresh(): Promise<FabForgeSnapshot>;
+  getWorkflowState?: () => FabForgeWorkflowState;
+  saveWorkflowState?: (state: FabForgeWorkflowState) => Promise<void>;
+  executeJob?: (input: { jobId: string; process: string; machineId?: string }) => Promise<{ status: "accepted" | "completed"; [key: string]: unknown }>;
+  verifyArtifact?: (input: { jobId: string; artifactPath: string; expectedKinds: readonly string[] }) => Promise<{ status: "passed" | "failed"; detail?: string }>;
 }) {
+  let workflowState: FabForgeWorkflowState = {};
+  const getState = () => coordinator.getWorkflowState?.() ?? workflowState;
+  const saveState = async (state: FabForgeWorkflowState) => { workflowState = state; await coordinator.saveWorkflowState?.(state); };
   return async (method: string, payload?: { navigationId?: string; panelId?: string; actionId?: string; workflowId?: string; input?: unknown }) => {
     const snapshot = coordinator.snapshot ?? (await coordinator.refresh());
-    if (method === "workflow.get") return { ok: true as const, result: buildManufacturingWorkflow(snapshot) };
+    if (method === "workflow.get") return { ok: true as const, result: buildManufacturingWorkflow(snapshot, getState()) };
     if (method === "surface.get") return { ok: true as const, result: buildSurfaceModel(snapshot, payload?.navigationId) };
     if (method === "panel.get" && payload?.panelId === "fabforge.kit-runs") {
       return {
@@ -49,6 +56,31 @@ export function createRpcHandler(coordinator: {
       };
     }
     if (method === "action.execute" && payload?.actionId === "fabforge.open-console") return { ok: true as const, result: { status: "completed" as const, message: "Station console opened by FabForge." } };
+    if (method === "action.execute" && payload?.workflowId === "fabforge.job-review") {
+      const state = getState();
+      if (payload.actionId === "approve") {
+        await saveState({ ...state, approved: true });
+        return { ok: true as const, result: { status: "approved" as const } };
+      }
+      const input = (payload.input ?? {}) as { jobId?: string; machineId?: string; artifactPath?: string };
+      const job = (snapshot.jobs ?? []).find((candidate) => candidate.id === input.jobId) ?? snapshot.jobs?.[0];
+      if (!job) return { ok: false as const, error: "FabForge has no manufacturing job to operate on" };
+      if (payload.actionId === "execute") {
+        if (!state.approved) return { ok: false as const, error: "Approve the manufacturing job before execution" };
+        if (!coordinator.executeJob) return { ok: false as const, error: "FabForge execution callback is unavailable" };
+        const result = await coordinator.executeJob({ jobId: job.id, process: job.process, ...(input.machineId ?? job.machineId ? { machineId: input.machineId ?? job.machineId } : {}) });
+        await saveState({ ...state, approved: true, executionRequested: true });
+        return { ok: true as const, result };
+      }
+      if (payload.actionId === "verify") {
+        if (!state.executionRequested) return { ok: false as const, error: "Execute the manufacturing job before verification" };
+        if (!coordinator.verifyArtifact) return { ok: false as const, error: "FabForge verification callback is unavailable" };
+        if (!input.artifactPath) return { ok: false as const, error: "An artifact path is required for verification" };
+        const result = await coordinator.verifyArtifact({ jobId: job.id, artifactPath: input.artifactPath, expectedKinds: buildProcessControl(job).artifactKinds });
+        await saveState({ ...state, verificationStatus: result.status });
+        return { ok: true as const, result };
+      }
+    }
     return { ok: false as const, error: `unsupported FabForge RPC method: ${method}` };
   };
 }

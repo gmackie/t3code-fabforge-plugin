@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCockpitViewModel, buildManufacturingWorkflow, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
+import { buildCockpitViewModel, buildManufacturingWorkflow, buildProcessControl, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
 
 describe("FabForge adapter", () => {
   test("normalizes projects and kit runs", () => {
@@ -65,5 +65,25 @@ describe("FabForge adapter", () => {
     expect(workflow.currentStage).toBe("review");
     expect(workflow.evidence?.[0]?.kind).toBe("check");
     expect(workflow.actions?.[0]?.id).toBe("approve");
+  });
+
+  test("derives safe controls and artifact expectations per process", () => {
+    expect(buildProcessControl({ id: "job-1", process: "fdm", status: "ready" })).toEqual({ action: "print", artifactKinds: ["gcode", "nc"] });
+    expect(buildProcessControl({ id: "job-2", process: "laser", status: "ready" })).toEqual({ action: "cut", artifactKinds: ["svg", "dxf"] });
+    expect(buildProcessControl({ id: "job-3", process: "plasma", status: "ready" })).toEqual({ action: "cut", artifactKinds: ["dxf"] });
+  });
+
+  test("executes and verifies a job through scoped adapter callbacks", async () => {
+    const requests: { path: string; body: unknown }[] = [];
+    const client = createFabForgeClient({ endpoint: "https://fabforge.example", token: "secret", workspaceId: "w1", fetchImpl: async (input, init) => {
+      requests.push({ path: new URL(String(input)).pathname, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      return new Response(JSON.stringify({ data: { status: "accepted", verification: "passed" } }), { status: 200 });
+    } });
+    await expect(client.executeJob({ jobId: "job-2", process: "laser", machineId: "laser-1" })).resolves.toEqual({ status: "accepted", verification: "passed" });
+    await expect(client.verifyArtifact({ jobId: "job-2", artifactPath: "out/job-2.dxf", expectedKinds: ["dxf"] })).resolves.toEqual({ status: "accepted", verification: "passed" });
+    expect(requests).toEqual([
+      { path: "/api/fabrication/v0/jobs/job-2/execute", body: { process: "laser", machineId: "laser-1" } },
+      { path: "/api/fabrication/v0/jobs/job-2/verify", body: { artifactPath: "out/job-2.dxf", expectedKinds: ["dxf"] } },
+    ]);
   });
 });
