@@ -1,4 +1,4 @@
-import { buildManufacturingWorkflow, buildProcessControl, buildSurfaceModel, type FabForgeSnapshot, type FabForgeWorkflowState } from "./fabforge.ts";
+import { buildManufacturingWorkflow, buildProcessControl, buildSurfaceModel, validateExecutionTarget, type FabForgeSnapshot, type FabForgeWorkflowState } from "./fabforge.ts";
 
 export function createRpcHandler(coordinator: {
   snapshot: FabForgeSnapshot | null;
@@ -70,7 +70,12 @@ export function createRpcHandler(coordinator: {
       if (payload.actionId === "execute") {
         if (!state.approved) return { ok: false as const, error: "Approve the manufacturing job before execution" };
         if (!coordinator.executeJob) return { ok: false as const, error: "FabForge execution callback is unavailable" };
-        const result = await coordinator.executeJob({ jobId: job.id, process: job.process, ...(input.machineId ?? job.machineId ? { machineId: input.machineId ?? job.machineId } : {}) });
+        const machineId = input.machineId ?? job.machineId;
+        const machine = machineId ? (snapshot.machines ?? []).find((candidate) => candidate.id === machineId) : undefined;
+        if (!machine) return { ok: false as const, error: machineId ? `Machine ${machineId} is unavailable` : "Select a machine before execution" };
+        const validation = validateExecutionTarget(job, machine);
+        if (!validation.ok) return { ok: false as const, error: validation.reason };
+        const result = await coordinator.executeJob({ jobId: job.id, process: job.process, machineId });
         await saveState({ ...state, approved: true, executionRequested: true });
         return { ok: true as const, result };
       }

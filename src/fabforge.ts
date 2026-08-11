@@ -39,6 +39,11 @@ export function buildProcessControl(job: FabForgeJob): FabForgeProcessControl {
     default: return { action: "inspect", artifactKinds: [] };
   }
 }
+export function validateExecutionTarget(job: FabForgeJob, machine: FabForgeMachine): { ok: true } | { ok: false; reason: string } {
+  if (machine.process.toLowerCase() !== job.process.toLowerCase()) return { ok: false, reason: `Machine ${machine.id} supports ${machine.process}, not ${job.process}` };
+  if (!["online", "idle", "ready"].includes(machine.status.toLowerCase())) return { ok: false, reason: `Machine ${machine.id} is ${machine.status}` };
+  return { ok: true };
+}
 export function buildManufacturingWorkflow(snapshot: FabForgeSnapshot, state: FabForgeWorkflowState = {}): ManufacturingWorkflowModel {
   const jobs = snapshot.jobs ?? [];
   const machines = snapshot.machines ?? [];

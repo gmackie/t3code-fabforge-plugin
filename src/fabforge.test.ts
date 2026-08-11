@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCockpitViewModel, buildManufacturingWorkflow, buildProcessControl, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot } from "./fabforge.ts";
+import { buildCockpitViewModel, buildManufacturingWorkflow, buildProcessControl, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot, validateExecutionTarget } from "./fabforge.ts";
 
 describe("FabForge adapter", () => {
   test("normalizes projects and kit runs", () => {
@@ -86,6 +86,13 @@ describe("FabForge adapter", () => {
     expect(buildProcessControl({ id: "job-1", process: "fdm", status: "ready" })).toEqual({ action: "print", artifactKinds: ["gcode", "nc"] });
     expect(buildProcessControl({ id: "job-2", process: "laser", status: "ready" })).toEqual({ action: "cut", artifactKinds: ["svg", "dxf"] });
     expect(buildProcessControl({ id: "job-3", process: "plasma", status: "ready" })).toEqual({ action: "cut", artifactKinds: ["dxf"] });
+  });
+
+  test("validates machine availability and process compatibility before execution", () => {
+    const job = { id: "job-1", process: "laser", status: "ready", machineId: "laser-1" };
+    expect(validateExecutionTarget(job, { id: "laser-1", name: "Laser 1", process: "laser", status: "online" })).toEqual({ ok: true });
+    expect(validateExecutionTarget(job, { id: "laser-1", name: "Laser 1", process: "plasma", status: "online" })).toEqual({ ok: false, reason: "Machine laser-1 supports plasma, not laser" });
+    expect(validateExecutionTarget(job, { id: "laser-1", name: "Laser 1", process: "laser", status: "offline" })).toEqual({ ok: false, reason: "Machine laser-1 is offline" });
   });
 
   test("executes and verifies a job through scoped adapter callbacks", async () => {

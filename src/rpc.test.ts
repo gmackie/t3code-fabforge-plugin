@@ -27,7 +27,7 @@ describe("FabForge RPC", () => {
   test("requires approval before requesting machine execution", async () => {
     const calls: unknown[] = [];
     const handler = createRpcHandler({
-      snapshot: { projects: [], kitRuns: [], jobs: [{ id: "job-1", process: "fdm", status: "ready", machineId: "printer-1" }], machines: [], materials: [] },
+      snapshot: { projects: [], kitRuns: [], jobs: [{ id: "job-1", process: "fdm", status: "ready", machineId: "printer-1" }], machines: [{ id: "printer-1", name: "Printer 1", process: "fdm", status: "online" }], materials: [] },
       refresh: async () => ({ projects: [], kitRuns: [] }),
       saveWorkflowState: async (state) => { calls.push(state); },
       executeJob: async (input) => { calls.push(input); return { status: "accepted" as const }; },
@@ -36,6 +36,19 @@ describe("FabForge RPC", () => {
     await expect(handler("action.execute", { actionId: "approve", workflowId: "fabforge.job-review" })).resolves.toMatchObject({ ok: true, result: { status: "approved" } });
     await expect(handler("action.execute", { actionId: "execute", workflowId: "fabforge.job-review", input: { jobId: "job-1", machineId: "printer-1" } })).resolves.toMatchObject({ ok: true, result: { status: "accepted" } });
     expect(calls).toEqual([{ approved: true }, { jobId: "job-1", process: "fdm", machineId: "printer-1" }, { approved: true, executionRequested: true }]);
+  });
+
+  test("rejects execution when the selected machine cannot run the job", async () => {
+    let executed = false;
+    const handler = createRpcHandler({
+      snapshot: { projects: [], kitRuns: [], jobs: [{ id: "job-1", process: "laser", status: "ready", machineId: "plasma-1" }], machines: [{ id: "plasma-1", name: "Plasma 1", process: "plasma", status: "online" }], materials: [] },
+      refresh: async () => ({ projects: [], kitRuns: [] }),
+      getWorkflowState: () => ({ approved: true }),
+      executeJob: async () => { executed = true; return { status: "accepted" as const }; },
+    });
+    const result = await handler("action.execute", { actionId: "execute", workflowId: "fabforge.job-review", input: { jobId: "job-1" } });
+    expect(result).toEqual({ ok: false, error: "Machine plasma-1 supports plasma, not laser" });
+    expect(executed).toBe(false);
   });
 
   test("persists the selected job when approving a manufacturing plan", async () => {
