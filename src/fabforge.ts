@@ -14,17 +14,38 @@ export type SurfaceModel = { pluginId: string; navigationId: string; title: stri
 export type ManufacturingWorkflowModel = { readonly pluginId: string; readonly workflowId: string; readonly title: string; readonly currentStage: "inspect" | "context" | "propose" | "review" | "approve" | "execute" | "verify" | "respond"; readonly refreshedAt: string; readonly steps: readonly { id: string; stage: ManufacturingWorkflowModel["currentStage"]; title: string; state: "pending" | "active" | "completed" | "blocked" | "failed"; detail?: string }[]; readonly evidence?: readonly { id: string; title: string; kind: "check" | "artifact" | "diff" | "log" | "link"; status: "neutral" | "positive" | "warning" | "negative"; detail?: string }[]; readonly actions?: readonly { id: string; title: string; tone?: "primary" | "secondary" | "destructive" }[] };
 export type FabForgeWorkflowState = { readonly approved?: boolean; readonly jobId?: string; readonly executionRequested?: boolean; readonly verificationStatus?: "pending" | "passed" | "failed" };
 
-async function get(input: { endpoint: string; token: string; workspaceId: string; fetchImpl: FetchLike }, path: string): Promise<any> {
-  const url = new URL(`${input.endpoint.replace(/\/$/, "")}${path}`); url.searchParams.set("workspaceId", input.workspaceId);
-  const response = await input.fetchImpl(url, { headers: { authorization: `Bearer ${input.token}` } });
-  if (!response.ok) throw new Error(`FabForge GET ${path} failed: ${response.status}`);
-  return response.json();
+export class FabForgeApiError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+  }
 }
-async function post(input: { endpoint: string; token: string; workspaceId: string; fetchImpl: FetchLike }, path: string, body: unknown): Promise<any> {
+export const FABFORGE_TIMEOUT_MS = 15_000;
+type Transport = { endpoint: string; token: string; workspaceId: string; fetchImpl: FetchLike; timeoutMs: number };
+// Every request is workspace-scoped and time-bounded. Errors stay short: no
+// URLs, and no response bodies beyond FabForge's own one-line message on 4xx.
+async function request(input: Transport, method: "GET" | "POST", path: string, body?: unknown): Promise<any> {
   const url = new URL(`${input.endpoint.replace(/\/$/, "")}${path}`); url.searchParams.set("workspaceId", input.workspaceId);
-  const response = await input.fetchImpl(url, { method: "POST", headers: { authorization: `Bearer ${input.token}`, "content-type": "application/json" }, body: JSON.stringify(body) });
-  if (!response.ok) throw new Error(`FabForge POST ${path} failed: ${response.status}`);
-  return response.json();
+  let response: Response;
+  try {
+    response = await input.fetchImpl(url, { method, signal: AbortSignal.timeout(input.timeoutMs), headers: { accept: "application/json", authorization: `Bearer ${input.token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  } catch (error) {
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new FabForgeApiError(0, `FabForge did not respond within ${Math.max(1, Math.ceil(input.timeoutMs / 1000))}s`);
+    throw new FabForgeApiError(0, "Could not reach FabForge; check FABFORGE_URL and the network");
+  }
+  if (!response.ok) throw await apiError(response, input.workspaceId);
+  const json = await response.json().catch(() => undefined);
+  if (json === undefined) throw new FabForgeApiError(response.status, "FabForge returned an unexpected response");
+  return json;
+}
+async function apiError(response: Response, workspaceId: string): Promise<FabForgeApiError> {
+  const { status } = response;
+  if (status >= 500) return new FabForgeApiError(status, "FabForge is temporarily unavailable");
+  if (status === 401 || status === 403) return new FabForgeApiError(status, `FabForge rejected the token (${status}); check FABFORGE_TOKEN has access to workspace "${workspaceId}"`);
+  if (status === 429) return new FabForgeApiError(status, "FabForge rate limit reached; try again shortly");
+  const body = (await response.json().catch(() => null)) as { error?: unknown; message?: unknown } | null;
+  const message = typeof body?.error === "string" ? body.error : typeof body?.message === "string" ? body.message : undefined;
+  if (status === 404) return new FabForgeApiError(status, `FabForge could not find that resource in workspace "${workspaceId}"${message ? `: ${message.slice(0, 200)}` : ""}`);
+  return new FabForgeApiError(status, `FabForge request failed (${status})${message ? `: ${message.slice(0, 200)}` : ""}`);
 }
 function payload(value: any): any { return value?.data ?? value; }
 function artifactKind(value: unknown, path: string): FabForgeArtifact["kind"] { if (value === "gcode" || value === "nc" || value === "svg" || value === "dxf") return value; const extension = path.toLowerCase().split(".").pop(); return extension === "gcode" || extension === "nc" || extension === "svg" || extension === "dxf" ? extension : "unknown"; }
@@ -81,13 +102,32 @@ export function buildSurfaceModel(snapshot: FabForgeSnapshot, navigationId = "fa
     ],
   };
 }
-export function createFabForgeClient(input: { endpoint: string; token: string; workspaceId: string; fetchImpl?: FetchLike }) {
-  const transport = { ...input, fetchImpl: input.fetchImpl ?? fetch };
+export function createFabForgeClient(input: { endpoint: string; token: string; workspaceId: string; fetchImpl?: FetchLike; timeoutMs?: number }) {
+  const transport: Transport = { ...input, fetchImpl: input.fetchImpl ?? fetch, timeoutMs: input.timeoutMs ?? FABFORGE_TIMEOUT_MS };
+  const get = (path: string) => request(transport, "GET", path).then(payload);
   return {
-    async snapshot() { const projects = payload(await get(transport, "/api/fabrication/v0/projects")); const runs = payload(await get(transport, "/api/fabrication/v0/kit-runs")); const jobs = payload(await get(transport, "/api/fabrication/v0/jobs")); const machines = payload(await get(transport, "/api/fabrication/v0/machines")); const materials = payload(await get(transport, "/api/fabrication/v0/materials")); const artifacts = payload(await get(transport, "/api/fabrication/v0/artifacts")); return normalizeFabForgeSnapshot({ projects, runs, jobs, machines, materials, artifacts }); },
-    async executeJob(input: { jobId: string; process: string; machineId?: string }) { return payload(await post(transport, `/api/fabrication/v0/jobs/${encodeURIComponent(input.jobId)}/execute`, { process: input.process, ...(input.machineId ? { machineId: input.machineId } : {}) })); },
-    async verifyArtifact(input: { jobId: string; artifactPath: string; expectedKinds: readonly string[] }) { return payload(await post(transport, `/api/fabrication/v0/jobs/${encodeURIComponent(input.jobId)}/verify`, { artifactPath: input.artifactPath, expectedKinds: input.expectedKinds })); },
+    async snapshot() { const [projects, runs, jobs, machines, materials, artifacts] = await Promise.all(["projects", "kit-runs", "jobs", "machines", "materials", "artifacts"].map((name) => get(`/api/fabrication/v0/${name}`))); return normalizeFabForgeSnapshot({ projects, runs, jobs, machines, materials, artifacts }); },
+    async executeJob(input: { jobId: string; process: string; machineId?: string }) { return payload(await request(transport, "POST", `/api/fabrication/v0/jobs/${encodeURIComponent(input.jobId)}/execute`, { process: input.process, ...(input.machineId ? { machineId: input.machineId } : {}) })); },
+    async verifyArtifact(input: { jobId: string; artifactPath: string; expectedKinds: readonly string[] }) { return payload(await request(transport, "POST", `/api/fabrication/v0/jobs/${encodeURIComponent(input.jobId)}/verify`, { artifactPath: input.artifactPath, expectedKinds: input.expectedKinds })); },
   };
 }
+export type FabForgeClient = ReturnType<typeof createFabForgeClient>;
 export function normalizePollingSeconds(value: number | undefined): number { return Math.min(3600, Math.max(15, Math.floor(value ?? 60))); }
 export function createPollingCoordinator<T>(input: { refresh: () => Promise<T>; intervalSeconds?: number; onError?: (error: unknown) => void }) { let cached: T | null = null; let timer: ReturnType<typeof setTimeout> | undefined; let active = false; const interval = normalizePollingSeconds(input.intervalSeconds) * 1000; const tick = async () => { if (!active) return; try { cached = await input.refresh(); } catch (error) { input.onError?.(error); } finally { if (active) timer = setTimeout(tick, interval); } }; return { get snapshot() { return cached; }, async refresh() { cached = await input.refresh(); return cached; }, start() { active = true; void tick(); }, stop() { active = false; if (timer) clearTimeout(timer); } }; }
+export type JobVerificationSummary = { status: "idle" | "running" | "failed"; summary: string };
+// The v1 job-verification panel's roll-up: any blocked job or failed artifact
+// fails it, pending work keeps it running.
+export function buildJobVerification(snapshot: FabForgeSnapshot): JobVerificationSummary {
+  const jobs = snapshot.jobs ?? [];
+  const artifacts = snapshot.artifacts ?? [];
+  const blocked = jobs.some((job) => ["blocked", "failed", "error"].includes(job.status));
+  const status = blocked || artifacts.some((artifact) => artifact.status === "failed") ? "failed" : jobs.length > 0 || artifacts.some((artifact) => artifact.status === "pending") ? "running" : "idle";
+  return { status, summary: `${jobs.length} manufacturing jobs · ${snapshot.machines?.length ?? 0} machines · ${snapshot.materials?.length ?? 0} materials` };
+}
+// FabForge's verify endpoint answers with status and/or verification. Only an
+// explicit pass counts as passed; anything unrecognised stays pending.
+export function verificationOutcome(result: unknown): { status: "passed" | "failed" | "pending"; detail?: string } {
+  const value = (result ?? {}) as { status?: unknown; verification?: unknown; detail?: unknown };
+  const status = value.status === "failed" || value.verification === "failed" ? "failed" : value.status === "passed" || value.verification === "passed" ? "passed" : "pending";
+  return { status, ...(typeof value.detail === "string" && value.detail ? { detail: value.detail.slice(0, 500) } : {}) };
+}

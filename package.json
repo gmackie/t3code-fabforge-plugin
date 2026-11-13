@@ -1,1 +1,25 @@
-{"name":"@t3code/fabforge-plugin","version":"0.1.0","private":true,"type":"module","scripts":{"test":"bun test","typecheck":"bunx tsc --noEmit","start":"bun src/stdio.ts"},"devDependencies":{"@types/bun":"1.3.14","typescript":"^5.8.3"}}
+{
+  "name": "@t3code/fabforge-plugin",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "mcp": "bun src/mcp.ts",
+    "inspect": "bunx @modelcontextprotocol/inspector@2.13.0 -e FABFORGE_URL=${FABFORGE_URL:-https://fabforge.forgegraf.com} -e FABFORGE_WORKSPACE_ID=${FABFORGE_WORKSPACE_ID:-} -e FABFORGE_TOKEN=${FABFORGE_TOKEN:-} -- bun src/mcp.ts"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/bun": "1.3.14",
+    "typescript": "7.0.2"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.4",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "zod": "^4.6.7"
+  },
+  "bin": {
+    "fabforge-t3-plugin-mcp": "src/mcp.ts"
+  }
+}

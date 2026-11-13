@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCockpitViewModel, buildManufacturingWorkflow, buildProcessControl, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot, validateExecutionTarget } from "./fabforge.ts";
+import { buildCockpitViewModel, buildJobVerification, buildManufacturingWorkflow, buildProcessControl, buildSurfaceModel, createFabForgeClient, createPollingCoordinator, normalizeFabForgeSnapshot, validateExecutionTarget, verificationOutcome } from "./fabforge.ts";
 
 describe("FabForge adapter", () => {
   test("normalizes projects and kit runs", () => {
@@ -107,5 +107,20 @@ describe("FabForge adapter", () => {
       { path: "/api/fabrication/v0/jobs/job-2/execute", body: { process: "laser", machineId: "laser-1" } },
       { path: "/api/fabrication/v0/jobs/job-2/verify", body: { artifactPath: "out/job-2.dxf", expectedKinds: ["dxf"] } },
     ]);
+  });
+});
+
+describe("FabForge verification", () => {
+  test("rolls up job verification like the v1 panel", () => {
+    expect(buildJobVerification({ projects: [], kitRuns: [] })).toEqual({ status: "idle", summary: "0 manufacturing jobs · 0 machines · 0 materials" });
+    expect(buildJobVerification({ projects: [], kitRuns: [], jobs: [{ id: "j", process: "fdm", status: "ready" }], artifacts: [{ id: "a", jobId: "j", path: "a.gcode", kind: "gcode", status: "pending" }] }).status).toBe("running");
+    expect(buildJobVerification({ projects: [], kitRuns: [], jobs: [{ id: "j", process: "fdm", status: "blocked" }] }).status).toBe("failed");
+  });
+
+  test("only counts an explicit pass as passed", () => {
+    expect(verificationOutcome({ status: "accepted", verification: "passed" })).toEqual({ status: "passed" });
+    expect(verificationOutcome({ status: "failed", detail: "warped" })).toEqual({ status: "failed", detail: "warped" });
+    expect(verificationOutcome({ status: "accepted" })).toEqual({ status: "pending" });
+    expect(verificationOutcome(null)).toEqual({ status: "pending" });
   });
 });
