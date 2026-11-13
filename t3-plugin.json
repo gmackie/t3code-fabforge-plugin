@@ -1,1 +1,114 @@
-{"schemaVersion":1,"id":"com.t3code.fabforge","displayName":"FabForge manufacturing IDE","version":"0.3.0","runtime":{"kind":"managed-app","command":["bun","src/stdio.ts"],"restart":"on-failure"},"contributes":{"navigation":[{"id":"fabforge.projects","title":"Projects","path":"/projects"},{"id":"fabforge.printing","title":"3D printing","path":"/printing"},{"id":"fabforge.laser","title":"Laser cutting","path":"/laser"},{"id":"fabforge.plasma","title":"Plasma cutting","path":"/plasma"},{"id":"fabforge.cnc","title":"CNC","path":"/cnc"},{"id":"fabforge.materials","title":"Materials","path":"/materials"},{"id":"fabforge.machines","title":"Machines","path":"/machines"},{"id":"fabforge.work-orders","title":"Work orders","path":"/work-orders"},{"id":"fabforge.kit-runs","title":"Kit runs","path":"/kit-runs"},{"id":"fabforge.evidence","title":"Evidence","path":"/evidence"}],"panels":[{"id":"fabforge.projects","title":"Fabrication projects","surface":"project"},{"id":"fabforge.kit-runs","title":"Kit-run serial console","surface":"thread.sidePanel"},{"id":"fabforge.job-verification","title":"Job verification","surface":"thread.main"}],"workflows":[{"id":"fabforge.job-review","title":"Manufacturing job review","surface":"thread.main"}],"settings":[{"id":"fabforge.endpoint","title":"FabForge endpoint","scope":"server","field":{"kind":"text","default":"https://fabforge.forgegraf.com"}},{"id":"fabforge.token","title":"FabForge token","scope":"server","field":{"kind":"text","secret":true}},{"id":"fabforge.workspace","title":"Workspace id","scope":"server","field":{"kind":"text"}},{"id":"fabforge.polling-seconds","title":"Refresh interval","scope":"server","field":{"kind":"number","default":60,"min":15,"max":3600,"step":15}}],"settingsPanels":[{"id":"fabforge.connection","title":"FabForge","description":"A manufacturing IDE for 3D printing, laser/plasma cutting, CNC, materials, machine state, and production evidence.","settingIds":["fabforge.endpoint","fabforge.token","fabforge.workspace","fabforge.polling-seconds"]}],"hooks":["turn.settled","runtime.error"]},"capabilities":[{"kind":"secrets.read","names":["FABFORGE_TOKEN"]},{"kind":"network.connect","hosts":["fabforge.forgegraf.com"]},{"kind":"ui.embed","surfaces":["project","thread.sidePanel","thread.main"]}]}
+{
+  "schemaVersion": 2,
+  "id": "com.t3code.fabforge",
+  "displayName": "FabForge manufacturing IDE",
+  "version": "0.4.0",
+  "description": "A manufacturing IDE for 3D printing, laser/plasma cutting and CNC: projects, jobs, machines, materials, kit runs and evidence, with human-approved job execution and artifact verification.",
+  "mcpServer": {
+    "name": "fabforge",
+    "transport": {
+      "type": "stdio",
+      "command": "bun",
+      "args": [
+        "${pluginRoot}/src/mcp.ts"
+      ],
+      "env": [
+        {
+          "name": "FABFORGE_URL",
+          "value": "https://fabforge.forgegraf.com",
+          "title": "FabForge endpoint"
+        },
+        {
+          "name": "FABFORGE_TOKEN",
+          "value": "",
+          "sensitive": true,
+          "title": "FabForge token"
+        },
+        {
+          "name": "FABFORGE_WORKSPACE_ID",
+          "value": "",
+          "title": "Workspace id"
+        },
+        {
+          "name": "FABFORGE_POLL_SECONDS",
+          "value": "60",
+          "title": "Refresh interval in seconds (15-3600)"
+        },
+        {
+          "name": "FABFORGE_EXECUTE_COMMAND",
+          "value": "",
+          "title": "Local execute command",
+          "description": "Optional. Runs instead of FabForge's execute API, with --job-id, --process and --machine-id appended."
+        },
+        {
+          "name": "FABFORGE_VERIFY_COMMAND",
+          "value": "",
+          "title": "Local verify command",
+          "description": "Optional. Runs instead of FabForge's verify API, with --job-id, --artifact and --expected appended; exit 0 passes."
+        },
+        {
+          "name": "FABFORGE_PLUGIN_STATE_PATH",
+          "value": "",
+          "title": "Shared job review state file",
+          "description": "Optional absolute SQLite path, shared by the server and agent copies."
+        }
+      ]
+    }
+  },
+  "contributes": {
+    "panels": [
+      {
+        "id": "fabforge-projects",
+        "title": "Fabrication projects",
+        "scope": "project",
+        "resourceUri": "ui://fabforge/workspace.html",
+        "tool": {
+          "name": "fabforge_workspace",
+          "arguments": {
+            "section": "projects"
+          }
+        }
+      },
+      {
+        "id": "fabforge-kit-runs",
+        "title": "Kit runs",
+        "scope": "thread",
+        "resourceUri": "ui://fabforge/workspace.html",
+        "tool": {
+          "name": "fabforge_workspace",
+          "arguments": {
+            "section": "kit-runs"
+          }
+        }
+      },
+      {
+        "id": "fabforge-job-verification",
+        "title": "Job verification",
+        "scope": "thread",
+        "resourceUri": "ui://fabforge/job-review.html",
+        "tool": {
+          "name": "fabforge_job_review",
+          "arguments": {}
+        }
+      }
+    ],
+    "commands": [
+      {
+        "id": "fabforge-open-projects",
+        "title": "FabForge: Open fabrication projects",
+        "panel": "fabforge-projects"
+      },
+      {
+        "id": "fabforge-open-kit-runs",
+        "title": "FabForge: Open kit runs",
+        "panel": "fabforge-kit-runs"
+      },
+      {
+        "id": "fabforge-open-job-verification",
+        "title": "FabForge: Open job verification",
+        "panel": "fabforge-job-verification"
+      }
+    ]
+  },
+  "t3Tools": []
+}
