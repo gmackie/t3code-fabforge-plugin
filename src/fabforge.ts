@@ -15,7 +15,8 @@ export type ManufacturingWorkflowModel = { readonly pluginId: string; readonly w
 export type FabForgeWorkflowState = { readonly approved?: boolean; readonly jobId?: string; readonly executionRequested?: boolean; readonly verificationStatus?: "pending" | "passed" | "failed" };
 
 export class FabForgeApiError extends Error {
-  constructor(readonly status: number, message: string) {
+  // `uncertain`: the request may have reached FabForge (e.g. it timed out).
+  constructor(readonly status: number, message: string, readonly uncertain = false) {
     super(message);
   }
 }
@@ -29,7 +30,7 @@ async function request(input: Transport, method: "GET" | "POST", path: string, b
   try {
     response = await input.fetchImpl(url, { method, signal: AbortSignal.timeout(input.timeoutMs), headers: { accept: "application/json", authorization: `Bearer ${input.token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   } catch (error) {
-    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new FabForgeApiError(0, `FabForge did not respond within ${Math.max(1, Math.ceil(input.timeoutMs / 1000))}s`);
+    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new FabForgeApiError(0, `FabForge did not respond within ${Math.max(1, Math.ceil(input.timeoutMs / 1000))}s`, true);
     throw new FabForgeApiError(0, "Could not reach FabForge; check FABFORGE_URL and the network");
   }
   if (!response.ok) throw await apiError(response, input.workspaceId);
@@ -130,4 +131,20 @@ export function verificationOutcome(result: unknown): { status: "passed" | "fail
   const value = (result ?? {}) as { status?: unknown; verification?: unknown; detail?: unknown };
   const status = value.status === "failed" || value.verification === "failed" ? "failed" : value.status === "passed" || value.verification === "passed" ? "passed" : "pending";
   return { status, ...(typeof value.detail === "string" && value.detail ? { detail: value.detail.slice(0, 500) } : {}) };
+}
+// FabForge's execute endpoint answers with a status. Only an explicit
+// accepted/queued/running/completed status with no error counts as sent;
+// rejected, failed, missing or unknown statuses are errors.
+const EXECUTION_STATUSES = ["accepted", "queued", "running", "completed"] as const;
+export function executionOutcome(result: unknown): { ok: true; status: (typeof EXECUTION_STATUSES)[number]; reference?: string } | { ok: false; reason: string } {
+  const value = (result && typeof result === "object" ? result : {}) as { status?: unknown; error?: unknown; message?: unknown; id?: unknown; reference?: unknown };
+  const status = typeof value.status === "string" ? value.status.toLowerCase() : undefined;
+  const error = typeof value.error === "string" && value.error ? value.error : value.error ? "error" : undefined;
+  if (!error && status && (EXECUTION_STATUSES as readonly string[]).includes(status)) {
+    const reference = typeof value.reference === "string" ? value.reference : typeof value.id === "string" ? value.id : undefined;
+    return { ok: true, status: status as (typeof EXECUTION_STATUSES)[number], ...(reference ? { reference: reference.slice(0, 200) } : {}) };
+  }
+  const detail = error ?? (typeof value.message === "string" && value.message ? value.message : undefined);
+  const label = status ? `status ${status.slice(0, 40)}` : "no status";
+  return { ok: false, reason: `FabForge did not accept the job (${label})${detail ? `: ${detail.slice(0, 200)}` : ""}` };
 }

@@ -10,7 +10,7 @@ A T3 Code plugin for FabForge, a manufacturing IDE for 3D printing, laser and pl
   - `fabforge_job_review`: one job's process control, compatible machines and review stage.
   - `fabforge_job_execute`: sends an approved job to a compatible, available machine.
   - `fabforge_artifact_verify`: checks the job's output artifact.
-- **Human approval:** only a person can approve a job, from the job review view (`fabforge_job_approve` is hidden from agents). Execution fails until the job is approved.
+- **Human approval:** only a person can approve a job, from the job review view (`fabforge_job_approve` is hidden from agents). Execution fails until the job is approved, and each approval allows one run: approve the job again to rerun it.
 
 ## Settings
 

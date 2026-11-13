@@ -8,6 +8,8 @@ import {
   buildManufacturingWorkflow,
   buildProcessControl,
   createFabForgeClient,
+  executionOutcome,
+  FabForgeApiError,
   validateExecutionTarget,
   verificationOutcome,
   type FabForgeJob,
@@ -171,6 +173,7 @@ export function createFabForgeMcpServer(options: FabForgeServerOptions = {}): Mc
         const job = findJob(snapshot, config, id);
         const state = await store.get(config.workspaceId, id);
         if (!state.approved) throw new Error(`Approve FabForge job ${id} in the job review before execution`);
+        if (state.executionRequested) throw new Error(`FabForge job ${id} was already sent to a machine; approve job ${id} again in the job review to rerun it`);
         const target = machineId ?? job.machineId;
         if (!target) throw new Error(`Select a machine for FabForge job ${id} before execution`);
         const machine = (snapshot.machines ?? []).find((candidate) => candidate.id === target);
@@ -178,17 +181,32 @@ export function createFabForgeMcpServer(options: FabForgeServerOptions = {}): Mc
         const validation = validateExecutionTarget(job, machine);
         if (!validation.ok) throw new Error(validation.reason);
 
-        let execution: { status: string; reference?: string };
-        if (config.executeCommand.length) {
-          const run = await runCommand(config.executeCommand, ["--job-id", job.id, "--process", job.process, "--machine-id", machine.id], options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS);
-          if (run.exitCode !== 0) throw new Error(`FABFORGE_EXECUTE_COMMAND failed (exit ${run.exitCode})${run.stderr ? `: ${run.stderr}` : ""}`);
-          execution = { status: "accepted", ...(run.stdout ? { reference: run.stdout } : {}) };
-        } else {
-          const response = ((await client.executeJob({ jobId: job.id, process: job.process, machineId: machine.id })) ?? {}) as { status?: unknown; id?: unknown; reference?: unknown };
-          const reference = typeof response.reference === "string" ? response.reference : typeof response.id === "string" ? response.id : undefined;
-          execution = { status: response.status === "completed" ? "completed" : "accepted", ...(reference ? { reference } : {}) };
+        // Use up the approval before the machine sees the job, so a concurrent
+        // or repeated call cannot run it twice on one approval.
+        if (!(await store.claimExecution(config.workspaceId, id))) {
+          const current = await store.get(config.workspaceId, id);
+          throw new Error(current.approved ? `FabForge job ${id} was already sent to a machine; approve job ${id} again in the job review to rerun it` : `Approve FabForge job ${id} in the job review before execution`);
         }
-        await store.save(config.workspaceId, id, { approved: true, executionRequested: true });
+        let execution: { status: string; reference?: string };
+        try {
+          if (config.executeCommand.length) {
+            const run = await runCommand(config.executeCommand, ["--job-id", job.id, "--process", job.process, "--machine-id", machine.id], options.commandTimeoutMs ?? COMMAND_TIMEOUT_MS);
+            if (run.exitCode !== 0) throw new Error(`FABFORGE_EXECUTE_COMMAND failed (exit ${run.exitCode})${run.stderr ? `: ${run.stderr}` : ""}`);
+            execution = { status: "accepted", ...(run.stdout ? { reference: run.stdout } : {}) };
+          } else {
+            const outcome = executionOutcome(await client.executeJob({ jobId: job.id, process: job.process, machineId: machine.id }));
+            if (!outcome.ok) throw new Error(outcome.reason);
+            execution = { status: outcome.status, ...(outcome.reference ? { reference: outcome.reference } : {}) };
+          }
+        } catch (error) {
+          // A timeout may still have reached the machine, so it keeps the
+          // approval used up; any definite failure gives it back.
+          if (error instanceof UncertainExecution || (error instanceof FabForgeApiError && error.uncertain)) {
+            throw new Error(`${error.message}. FabForge job ${id} may have reached machine ${machine.id}; check the machine, then approve job ${id} again to rerun it`);
+          }
+          await store.releaseExecution(config.workspaceId, id);
+          throw error;
+        }
         const data = { ...(await review(config, await client.snapshot().catch(() => snapshot), id)), execution };
         return { data, text: `FabForge job ${id} ${execution.status} on machine ${machine.id}${execution.reference ? ` (reference ${execution.reference})` : ""}.` };
       }),
@@ -241,6 +259,8 @@ function reviewText(data: JobReviewData): string {
   return `${header}\nJob ${job.id}: ${job.process} [${job.status}], ${job.control.action}, expects ${job.control.artifactKinds.join("/") || "operator evidence"}. Compatible machines: ${machines}.\nStage ${data.workflow.currentStage}, next action: ${next}${next.startsWith("Approve") ? " (a human approves in the job review view)" : ""}.\n${steps}`;
 }
 
+class UncertainExecution extends Error {}
+
 async function runCommand(prefix: readonly string[], args: readonly string[], timeoutMs: number): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   let child: ReturnType<typeof Bun.spawn>;
   try {
@@ -249,7 +269,7 @@ async function runCommand(prefix: readonly string[], args: readonly string[], ti
     throw new Error(`Could not start ${prefix[0]}; check the FabForge command setting`);
   }
   const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout as ReadableStream).text(), new Response(child.stderr as ReadableStream).text(), child.exited]);
-  if (child.signalCode) throw new Error(`${prefix[0]} did not finish within ${Math.ceil(timeoutMs / 1000)}s`);
+  if (child.signalCode) throw new UncertainExecution(`${prefix[0]} did not finish within ${Math.ceil(timeoutMs / 1000)}s`);
   return { exitCode, stdout: stdout.trim().slice(0, 500), stderr: stderr.trim().split("\n")[0]!.slice(0, 200) };
 }
 

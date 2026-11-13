@@ -11,6 +11,11 @@ import type { FabForgeWorkflowState } from "./fabforge.ts";
 export type WorkflowStore = {
   get(workspaceId: string, jobId: string): Promise<FabForgeWorkflowState>;
   save(workspaceId: string, jobId: string, state: FabForgeWorkflowState): Promise<void>;
+  // Atomically uses up an approval: true only when the job is approved and not
+  // yet sent, so one human approval allows exactly one machine run.
+  claimExecution(workspaceId: string, jobId: string): Promise<boolean>;
+  // Gives the approval back when the machine never got the job.
+  releaseExecution(workspaceId: string, jobId: string): Promise<void>;
 };
 
 export function sqliteWorkflowStore(path: string): WorkflowStore {
@@ -36,14 +41,38 @@ export function sqliteWorkflowStore(path: string): WorkflowStore {
         .query("INSERT INTO fabforge_job_review (workspace_id, job_id, state, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(workspace_id, job_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at")
         .run(workspaceId, jobId, JSON.stringify(sanitize(state)), new Date().toISOString());
     },
+    async claimExecution(workspaceId, jobId) {
+      // One conditional UPDATE, so two copies racing on the same approval
+      // cannot both pass.
+      const { changes } = open()
+        .query("UPDATE fabforge_job_review SET state = json_set(state, '$.executionRequested', json('true')), updated_at = ? WHERE workspace_id = ? AND job_id = ? AND json_extract(state, '$.approved') = 1 AND COALESCE(json_extract(state, '$.executionRequested'), 0) = 0")
+        .run(new Date().toISOString(), workspaceId, jobId);
+      return changes === 1;
+    },
+    async releaseExecution(workspaceId, jobId) {
+      open()
+        .query("UPDATE fabforge_job_review SET state = json_set(state, '$.executionRequested', json('false')), updated_at = ? WHERE workspace_id = ? AND job_id = ? AND json_extract(state, '$.executionRequested') = 1 AND json_extract(state, '$.verificationStatus') IS NULL")
+        .run(new Date().toISOString(), workspaceId, jobId);
+    },
   };
 }
 
 export function memoryWorkflowStore(): WorkflowStore {
   const states = new Map<string, FabForgeWorkflowState>();
+  const key = (workspaceId: string, jobId: string) => `${workspaceId}\u0000${jobId}`;
   return {
-    get: async (workspaceId, jobId) => states.get(`${workspaceId}\u0000${jobId}`) ?? {},
-    save: async (workspaceId, jobId, state) => void states.set(`${workspaceId}\u0000${jobId}`, sanitize(state)),
+    get: async (workspaceId, jobId) => states.get(key(workspaceId, jobId)) ?? {},
+    save: async (workspaceId, jobId, state) => void states.set(key(workspaceId, jobId), sanitize(state)),
+    async claimExecution(workspaceId, jobId) {
+      const state = states.get(key(workspaceId, jobId));
+      if (!state?.approved || state.executionRequested) return false;
+      states.set(key(workspaceId, jobId), { ...state, executionRequested: true });
+      return true;
+    },
+    async releaseExecution(workspaceId, jobId) {
+      const state = states.get(key(workspaceId, jobId));
+      if (state?.executionRequested && !state.verificationStatus) states.set(key(workspaceId, jobId), { ...state, executionRequested: false });
+    },
   };
 }
 

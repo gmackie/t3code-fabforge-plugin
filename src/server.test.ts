@@ -93,6 +93,75 @@ describe("FabForge MCP server", () => {
     expect(fab.requests.filter((request) => request.method === "POST")[1]!.body).toEqual({ artifactPath: "out/panel.dxf", expectedKinds: ["svg", "dxf"] });
   });
 
+  it("uses up an approval: a rerun needs a new human approval", async () => {
+    const { client } = await connectedClient({ env: env(fab) });
+    const executes = () => fab.requests.filter((request) => request.method === "POST" && request.url.pathname.endsWith("/execute")).length;
+    await call(client, "fabforge_job_approve", { jobId: "job-1" });
+    expect((await call(client, "fabforge_job_execute", { jobId: "job-1" })).isError).toBeFalsy();
+    const again = await call(client, "fabforge_job_execute", { jobId: "job-1" });
+    expect(again).toMatchObject({ isError: true, content: [{ text: "FabForge job job-1 was already sent to a machine; approve job job-1 again in the job review to rerun it" }] });
+    await call(client, "fabforge_artifact_verify", { jobId: "job-1", artifactPath: "out/panel.dxf" });
+    expect((await call(client, "fabforge_job_execute", { jobId: "job-1" })).isError).toBe(true);
+    expect(executes()).toBe(1);
+
+    await call(client, "fabforge_job_approve", { jobId: "job-1" });
+    expect((await call(client, "fabforge_job_execute", { jobId: "job-1" })).isError).toBeFalsy();
+    expect(executes()).toBe(2);
+  });
+
+  it("lets only one of two racing plugin copies run an approval", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "fabforge-state-"));
+    try {
+      const path = join(dir, "state.sqlite");
+      const panel = await connectedClient({ env: env(fab), store: sqliteWorkflowStore(path) });
+      const first = await connectedClient({ env: env(fab), store: sqliteWorkflowStore(path) });
+      const second = await connectedClient({ env: env(fab), store: sqliteWorkflowStore(path) });
+      await call(panel.client, "fabforge_job_approve", { jobId: "job-1" });
+      const results = await Promise.all([first, second].map(({ client }) => call(client, "fabforge_job_execute", { jobId: "job-1" })));
+      expect(results.filter((result) => !result.isError)).toHaveLength(1);
+      expect(results.find((result) => result.isError)!.content[0]!.text).toContain("already sent to a machine");
+      expect(fab.requests.filter((request) => request.url.pathname.endsWith("/execute"))).toHaveLength(1);
+      const rerun = await call(panel.client, "fabforge_job_execute", { jobId: "job-1" });
+      expect(rerun.isError).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a rejected execution as an error and keeps the approval", async () => {
+    const { client } = await connectedClient({ env: env(fab) });
+    await call(client, "fabforge_job_approve", { jobId: "job-1" });
+    for (const body of [{ status: "rejected", error: "machine busy" }, { status: "failed" }, {}, { status: "accepted", error: "door open" }]) {
+      fab.respond((request, url) => (request.method === "POST" && url.pathname.endsWith("/execute") ? Response.json({ data: body }) : undefined));
+      const result = await call(client, "fabforge_job_execute", { jobId: "job-1" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0]!.text).toStartWith("FabForge did not accept the job");
+    }
+    fab.respond(() => undefined);
+    const review = await call(client, "fabforge_job_review", { jobId: "job-1" });
+    expect(review.structuredContent!.state).toEqual({ approved: true, executionRequested: false });
+
+    fab.respond((request, url) => (request.method === "POST" && url.pathname.endsWith("/execute") ? Response.json({ data: { status: "rejected", error: "machine busy" } }) : undefined));
+    expect((await call(client, "fabforge_job_execute", { jobId: "job-1" })).content[0]!.text).toBe("FabForge did not accept the job (status rejected): machine busy");
+    fab.respond(() => undefined);
+    expect((await call(client, "fabforge_job_execute", { jobId: "job-1" })).isError).toBeFalsy();
+  });
+
+  it("keeps the approval used up when an execute call times out", async () => {
+    const { client } = await connectedClient({ env: env(fab), timeoutMs: 50 });
+    await call(client, "fabforge_job_approve", { jobId: "job-1" });
+    fab.respond(async (request, url) => {
+      if (request.method !== "POST" || !url.pathname.endsWith("/execute")) return undefined;
+      await Bun.sleep(300);
+      return Response.json({ data: { status: "accepted" } });
+    });
+    const result = await call(client, "fabforge_job_execute", { jobId: "job-1" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]!.text).toContain("may have reached machine laser-1");
+    fab.respond(() => undefined);
+    expect((await call(client, "fabforge_job_execute", { jobId: "job-1" })).content[0]!.text).toContain("already sent to a machine");
+  });
+
   it("refuses machines that cannot run the job", async () => {
     const { client } = await connectedClient({ env: env(fab) });
     await call(client, "fabforge_job_approve", { jobId: "job-2" });
