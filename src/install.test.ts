@@ -6,13 +6,32 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import manifest from "../t3-plugin.json";
 
-it("launches the installed manifest from another directory and serves its panels", async () => {
+it("installs the hosted OAuth server and keeps the panel commands", () => {
+  expect(manifest.mcpServer).toEqual({
+    name: "fabforge",
+    transport: {
+      type: "http",
+      url: "https://fab.forgegraf.com/mcp",
+      headers: [],
+      auth: { type: "oauth", scopes: ["mcp:read", "mcp:review", "mcp:verify", "mcp:execute", "offline_access"] },
+    },
+  });
+  expect(manifest.contributes.panels.map((panel) => panel.id)).toEqual([
+    "fabforge-projects",
+    "fabforge-kit-runs",
+    "fabforge-job-verification",
+  ]);
+  const panels = new Set(manifest.contributes.panels.map((panel) => panel.id));
+  for (const command of manifest.contributes.commands) expect(panels.has(command.panel)).toBe(true);
+});
+
+it("launches the standalone stdio operator from another directory and serves its panels", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "fabforge-install-"));
   const root = new URL("../", import.meta.url).pathname.replace(/\/$/, "");
   // Unconfigured on purpose: the server must start and explain what is missing.
   const transport = new StdioClientTransport({
-    command: manifest.mcpServer.transport.command,
-    args: manifest.mcpServer.transport.args.map((arg) => arg.replaceAll("${pluginRoot}", root)),
+    command: process.execPath,
+    args: [join(root, "src/mcp.ts")],
     cwd,
     env: { PATH: process.env.PATH ?? "", FABFORGE_PLUGIN_STATE_PATH: join(cwd, "state.sqlite") },
   });

@@ -1,5 +1,7 @@
 # FabForge manifest v2 (T3CODE-75)
 
+This is the porting record for the original stdio plugin. The current hosted connection and permissions are documented in the [README](../README.md).
+
 `t3-plugin.json` follows the MCP-native plugin design approved on T3CODE-74, ported the same way as the Bob pilot (gmackie/t3code-bob-plugin v0.2.1). T3 loads this manifest into its server-owned MCP registry.
 
 ## Shape
