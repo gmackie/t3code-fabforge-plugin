@@ -1,6 +1,6 @@
 # T3 Code FabForge plugin
 
-A T3 Code plugin for FabForge, a manufacturing IDE for 3D printing, laser and plasma cutting, CNC, materials, machine state and production evidence. It is an MCP server (manifest v2) with MCP Apps views, and it talks to FabForge's workspace-scoped fabrication API.
+Install the plugin in T3, then sign in under **Settings → Tools → fabforge**. T3 connects to `https://fab.forgegraf.com/mcp`. Choose the workspace whose projects, kit runs and jobs you want to see. `mcp:read` and `mcp:review` enable the read tools and both panel resources.
 
 ## What it adds
 
@@ -10,11 +10,11 @@ A T3 Code plugin for FabForge, a manufacturing IDE for 3D printing, laser and pl
   - `fabforge_job_review`: one job's process control, compatible machines and review stage.
   - `fabforge_job_execute`: sends an approved job to a compatible, available machine.
   - `fabforge_artifact_verify`: checks the job's output artifact.
-- **Human approval:** only a person can approve a job, from the job review view (`fabforge_job_approve` is hidden from agents). Execution fails until the job is approved, and each approval allows one run: approve the job again to rerun it.
+- The job review panel opens FabForge’s signed-in approval page. Execution requires `mcp:execute` and approval for the exact start intent. Recording an output check requires `mcp:verify`. Select these permissions during consent when needed. `offline_access` allows T3 to renew the connection.
 
-## Settings
+## Standalone stdio operator
 
-Set these under Settings → Tools → fabforge:
+For scripts and local integrations, `bun run mcp` accepts these environment variables.
 
 | Variable | Purpose |
 |---|---|

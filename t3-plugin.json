@@ -2,57 +2,24 @@
   "schemaVersion": 2,
   "id": "com.t3code.fabforge",
   "displayName": "FabForge manufacturing IDE",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A manufacturing IDE for 3D printing, laser/plasma cutting and CNC: projects, jobs, machines, materials, kit runs and evidence, with human-approved job execution and artifact verification.",
   "mcpServer": {
     "name": "fabforge",
     "transport": {
-      "type": "stdio",
-      "command": "bun",
-      "args": [
-        "${pluginRoot}/src/mcp.ts"
-      ],
-      "env": [
-        {
-          "name": "FABFORGE_URL",
-          "value": "https://fabforge.forgegraf.com",
-          "title": "FabForge endpoint"
-        },
-        {
-          "name": "FABFORGE_TOKEN",
-          "value": "",
-          "sensitive": true,
-          "title": "FabForge token"
-        },
-        {
-          "name": "FABFORGE_WORKSPACE_ID",
-          "value": "",
-          "title": "Workspace id"
-        },
-        {
-          "name": "FABFORGE_POLL_SECONDS",
-          "value": "60",
-          "title": "Refresh interval in seconds (15-3600)"
-        },
-        {
-          "name": "FABFORGE_EXECUTE_COMMAND",
-          "value": "",
-          "title": "Local execute command",
-          "description": "Optional. Runs instead of FabForge's execute API, with --job-id, --process and --machine-id appended."
-        },
-        {
-          "name": "FABFORGE_VERIFY_COMMAND",
-          "value": "",
-          "title": "Local verify command",
-          "description": "Optional. Runs instead of FabForge's verify API, with --job-id, --artifact and --expected appended; exit 0 passes."
-        },
-        {
-          "name": "FABFORGE_PLUGIN_STATE_PATH",
-          "value": "",
-          "title": "Shared job review state file",
-          "description": "Optional absolute SQLite path, shared by the server and agent copies."
-        }
-      ]
+      "type": "http",
+      "url": "https://fab.forgegraf.com/mcp",
+      "headers": [],
+      "auth": {
+        "type": "oauth",
+        "scopes": [
+          "mcp:read",
+          "mcp:review",
+          "mcp:verify",
+          "mcp:execute",
+          "offline_access"
+        ]
+      }
     }
   },
   "contributes": {
